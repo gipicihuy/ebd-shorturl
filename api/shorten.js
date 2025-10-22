@@ -11,7 +11,7 @@ app.use(express.json());
 let db;
 async function initDB() {
   db = await open({
-    filename: './urls.db',
+    filename: '/tmp/urls.db',  // Use /tmp for Vercel
     driver: sqlite3.Database
   });
   
@@ -36,83 +36,87 @@ function generateShortCode(length = 6) {
   return code;
 }
 
-// Shorten URL endpoint
-app.post('/api/shorten', async (req, res) => {
-  try {
-    const { long_url } = req.body;
+// Handle ALL requests
+app.all('*', async (req, res) => {
+  await initDB(); // Initialize DB on each request
+  
+  const path = req.path;
+  
+  // Handle redirect for short codes
+  if (path.length === 7 && path.startsWith('/')) { // /abc123 format
+    const short_code = path.slice(1); // Remove leading slash
     
-    if (!long_url) {
-      return res.json({ success: false, error: 'URL is required' });
-    }
-    
-    // Validate URL
     try {
-      new URL(long_url);
-    } catch (e) {
-      return res.json({ success: false, error: 'Invalid URL' });
-    }
-    
-    let short_code;
-    let exists;
-    
-    // Generate unique short code
-    do {
-      short_code = generateShortCode();
-      const existing = await db.get(
-        'SELECT id FROM short_urls WHERE short_code = ?', 
+      const url = await db.get(
+        'SELECT long_url FROM short_urls WHERE short_code = ?',
         [short_code]
       );
-      exists = !!existing;
-    } while (exists);
-    
-    // Save to database
-    await db.run(
-      'INSERT INTO short_urls (long_url, short_code) VALUES (?, ?)',
-      [long_url, short_code]
-    );
-    
-    res.json({
-      success: true,
-      short_code: short_code,
-      short_url: `https://ebd.biz.id/${short_code}`
-    });
-    
-  } catch (error) {
-    res.json({ success: false, error: 'Server error' });
+      
+      if (url && url.long_url) {
+        // Update click count
+        await db.run(
+          'UPDATE short_urls SET click_count = click_count + 1 WHERE short_code = ?',
+          [short_code]
+        );
+        
+        return res.redirect(302, url.long_url);
+      } else {
+        return res.status(404).send('URL not found: ' + short_code);
+      }
+    } catch (error) {
+      return res.status(500).send('Server error');
+    }
   }
-});
-
-// Redirect endpoint
-app.get('/:code', async (req, res) => {
-  try {
-    const { code } = req.params;
-    
-    const url = await db.get(
-      'SELECT long_url FROM short_urls WHERE short_code = ?',
-      [code]
-    );
-    
-    if (url && url.long_url) {
-      // Update click count
+  
+  // Handle API shorten
+  if (path === '/api/shorten' && req.method === 'POST') {
+    try {
+      const { long_url } = req.body;
+      
+      if (!long_url) {
+        return res.json({ success: false, error: 'URL is required' });
+      }
+      
+      // Validate URL
+      try {
+        new URL(long_url);
+      } catch (e) {
+        return res.json({ success: false, error: 'Invalid URL' });
+      }
+      
+      let short_code;
+      let exists;
+      
+      // Generate unique short code
+      do {
+        short_code = generateShortCode();
+        const existing = await db.get(
+          'SELECT id FROM short_urls WHERE short_code = ?', 
+          [short_code]
+        );
+        exists = !!existing;
+      } while (exists);
+      
+      // Save to database
       await db.run(
-        'UPDATE short_urls SET click_count = click_count + 1 WHERE short_code = ?',
-        [code]
+        'INSERT INTO short_urls (long_url, short_code) VALUES (?, ?)',
+        [long_url, short_code]
       );
       
-      return res.redirect(url.long_url);
+      return res.json({
+        success: true,
+        short_code: short_code,
+        short_url: `https://ebd.biz.id/${short_code}`
+      });
+      
+    } catch (error) {
+      return res.json({ success: false, error: 'Server error' });
     }
-    
-    res.status(404).send('URL not found');
-    
-  } catch (error) {
-    res.status(500).send('Server error');
   }
+  
+  // Default response
+  res.status(404).send('Not found');
 });
 
-// Initialize and start server
-initDB().then(() => {
-  const port = process.env.PORT || 3000;
-  app.listen(port, () => {
-    console.log(`Server running on port ${port}`);
-  });
-});
+// Export for Vercel
+module.exports = app;
