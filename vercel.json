@@ -1,0 +1,11 @@
+{
+  "functions": {
+    "api/*.php": {
+      "runtime": "vercel-php@0.6.0"
+    }
+  },
+  "routes": [
+    { "src": "/", "dest": "/public/index.html" },
+    { "src": "/([a-zA-Z0-9]+)", "dest": "/api/redirect.php?code=$1" }
+  ]
+}
