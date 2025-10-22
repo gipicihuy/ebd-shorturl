@@ -4,6 +4,10 @@
     {
       "src": "api/shorten.js",
       "use": "@vercel/node"
+    },
+    {
+      "src": "public/index.html",
+      "use": "@vercel/static"
     }
   ],
   "routes": [
@@ -13,12 +17,12 @@
       "methods": ["POST"]
     },
     {
-      "src": "/([a-zA-Z0-9]+)",
+      "src": "/([a-zA-Z0-9]{6})",  // Handle short codes (6 characters)
       "dest": "/api/shorten.js"
     },
     {
       "src": "/",
-      "dest": "/index.html"
+      "dest": "/public/index.html"
     }
   ]
 }
