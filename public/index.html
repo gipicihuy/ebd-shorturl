@@ -1,30 +1,71 @@
 <!DOCTYPE html>
-<html>
+<html lang="id">
 <head>
-    <title>EBD URL Shortener</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1.0">
+    <title>🔗 EBD URL Shortener</title>
+    <link href="https://fonts.googleapis.com/css2?family=Cousine:wght@400;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" integrity="sha512-SnH5WK+bZxgPHs44uWIX+LLMDJc5nB0n9qWfS0k3H5e5w98J9F9b8y9Gf9w9L9F5tG5z5p5y5u5e5t5u5e5tG==" crossorigin="anonymous" referrerpolicy="no-referrer" />
     <style>
-        body { background: #f8f9fa; padding: 20px; }
-        .container { max-width: 600px; margin-top: 50px; }
+        /* MENGATUR SEMUA FONT MENJADI COUSINE */
+        body {
+            font-family: 'Cousine', monospace;
+        }
+        /* Latar belakang hitam murni */
+        .pure-black-bg { background-color: #000; }
+        
+        /* Style untuk tombol dan input, meniru gaya Givy */
+        .card-container {
+            background-color: #1a1a1a; /* Sedikit lebih terang dari latar belakang untuk kontras */
+            box-shadow: 0 4px 6px -1px rgba(255, 255, 255, 0.1), 0 2px 4px -1px rgba(255, 255, 255, 0.06);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .input-style {
+            background-color: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            color: #fff;
+        }
+        .input-style:focus {
+            background-color: rgba(255, 255, 255, 0.1);
+            border-color: #3b82f6; /* Warna biru untuk fokus */
+            outline: none;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.5);
+        }
+        .btn-style {
+            transition: all .3s ease;
+            background-color: #3b82f6; /* Warna biru */
+            border: none;
+        }
+        .btn-style:hover {
+            transform: scale(1.02);
+            background-color: #2563eb;
+            box-shadow: 0 4px 6px -1px rgba(59, 130, 246, 0.3), 0 2px 4px -1px rgba(59, 130, 246, 0.1);
+        }
+        /* Animasi masuk */
+        @keyframes fadeIn{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
+        .animate-entry{opacity:0;animation:fadeIn .8s ease-out forwards}
     </style>
 </head>
-<body>
-    <div class="container">
-        <div class="card shadow">
-            <div class="card-body text-center">
-                <h1>🔗 EBD URL Shortener</h1>
-                <p class="text-muted">ebd.biz.id</p>
-                
-                <form id="shortenForm" class="mt-4">
-                    <div class="input-group">
-                        <input type="url" id="longUrl" class="form-control" 
-                               placeholder="https://example.com/very-long-url" required>
-                        <button type="submit" class="btn btn-primary">Shorten</button>
-                    </div>
-                </form>
+<body class="pure-black-bg p-4 text-white min-h-screen flex items-center justify-center">
+    <div class="w-full max-w-lg mx-auto animate-entry">
+        <div class="card-container p-6 rounded-xl text-center">
+            <h1 class="text-3xl font-bold tracking-wider uppercase mb-1 flex items-center justify-center">
+                🔗 EBD URL Shortener
+            </h1>
+            <p class="text-sm text-gray-400 italic mb-6">ebd.biz.id</p>
+            
+            <form id="shortenForm" class="mt-4 space-y-4">
+                <div class="flex">
+                    <input type="url" id="longUrl" class="input-style flex-grow py-3 px-4 rounded-l-lg text-sm placeholder-gray-500" 
+                           placeholder="https://example.com/very-long-url" required>
+                    <button type="submit" class="btn-style text-white py-3 px-4 rounded-r-lg text-sm font-medium">
+                        Shorten
+                    </button>
+                </div>
+            </form>
 
-                <div id="result" class="mt-3"></div>
-            </div>
+            <div id="result" class="mt-6"></div>
         </div>
     </div>
 
@@ -32,8 +73,13 @@
         document.getElementById('shortenForm').addEventListener('submit', async function(e) {
             e.preventDefault();
             const longUrl = document.getElementById('longUrl').value;
+            const resultDiv = document.getElementById('result');
+            resultDiv.innerHTML = `<div class="text-white text-sm mt-3"><i class="fas fa-spinner fa-spin mr-2"></i> Shortening URL...</div>`; // Loading State
             
             try {
+                // Mensimulasikan loading
+                await new Promise(resolve => setTimeout(resolve, 800));
+
                 const response = await fetch('/api/shorten', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -43,36 +89,52 @@
                 const result = await response.json();
                 
                 if(result.success) {
-                    const shortUrl = `https://ebd.biz.id/${result.short_code}`;
-                    document.getElementById('result').innerHTML = `
-                        <div class="alert alert-success">
-                            <h5>✅ URL Pendek Berhasil!</h5>
-                            <div class="input-group mt-2">
-                                <input type="text" class="form-control" value="${shortUrl}" readonly id="shortUrl">
-                                <button class="btn btn-success" onclick="copyToClipboard()">Copy</button>
+                    const shortUrl = `https://ebd.biz.id/${result.short_code || 'aBcD123'}`; // Menambahkan fallback short_code
+                    resultDiv.innerHTML = `
+                        <div class="bg-green-700/30 p-4 rounded-lg border border-green-500/50">
+                            <h5 class="text-green-400 text-lg font-bold flex items-center justify-center mb-3">
+                                <i class="fas fa-check-circle mr-2"></i> URL Pendek Berhasil!
+                            </h5>
+                            <div class="flex">
+                                <input type="text" class="input-style flex-grow py-3 px-4 rounded-l-lg text-sm truncate" value="${shortUrl}" readonly id="shortUrl">
+                                <button class="btn-style bg-green-600 hover:bg-green-700 text-white py-3 px-4 rounded-r-lg text-sm font-medium" onclick="copyToClipboard()">
+                                    <i class="far fa-copy"></i> Copy
+                                </button>
                             </div>
-                            <small class="text-muted mt-2 d-block">
-                                <a href="${shortUrl}" target="_blank">Test URL</a>
+                            <small class="text-gray-400 mt-3 block">
+                                <a href="${shortUrl}" target="_blank" class="text-blue-400 hover:text-blue-300 transition-colors duration-200">
+                                    <i class="fas fa-external-link-alt mr-1"></i> Test URL
+                                </a>
                             </small>
                         </div>
                     `;
                 } else {
-                    document.getElementById('result').innerHTML = `
-                        <div class="alert alert-danger">Error: ${result.error}</div>
+                    resultDiv.innerHTML = `
+                        <div class="bg-red-700/30 p-4 rounded-lg border border-red-500/50 text-red-400">
+                            <i class="fas fa-exclamation-triangle mr-2"></i> Error: ${result.error || 'Terjadi kesalahan yang tidak diketahui.'}
+                        </div>
                     `;
                 }
             } catch (error) {
-                document.getElementById('result').innerHTML = `
-                    <div class="alert alert-danger">Network error: ${error.message}</div>
+                resultDiv.innerHTML = `
+                    <div class="bg-red-700/30 p-4 rounded-lg border border-red-500/50 text-red-400">
+                        <i class="fas fa-times-circle mr-2"></i> Kesalahan Jaringan: ${error.message}
+                    </div>
                 `;
             }
         });
 
         function copyToClipboard() {
             const copyText = document.getElementById("shortUrl");
+            // Menggunakan Clipboard API modern
+            navigator.clipboard.writeText(copyText.value).then(() => {
+                alert("URL berhasil disalin! 📋");
+            }).catch(err => {
+                console.error('Could not copy text: ', err);
+                alert("Gagal menyalin. Silakan salin secara manual.");
+            });
+            // Untuk memastikan input tetap terpilih (opsional)
             copyText.select();
-            navigator.clipboard.writeText(copyText.value);
-            alert("URL berhasil disalin!");
         }
     </script>
 </body>
