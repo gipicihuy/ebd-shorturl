@@ -1,0 +1,13 @@
+{
+  "name": "ebd-shorturl",
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "node server.js",
+    "build": "echo 'Build complete'"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "sqlite3": "^5.1.6",
+    "cors": "^2.8.5"
+  }
+}
