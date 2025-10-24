@@ -10,9 +10,13 @@ app.use(express.json());
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 
-// Open SQLite database
-let db;
+let db = null; // Inisialisasi DB sekarang menjadi null di luar handler
+
+// Open SQLite database dan pastikan tabel ada
 async function initDB() {
+  if (db) return db; // Jika sudah ada, langsung kembalikan
+  
+  // Catatan: Vercel serverless hanya mengizinkan penulisan di direktori /tmp
   db = await open({
     filename: '/tmp/urls.db',
     driver: sqlite3.Database
@@ -27,9 +31,10 @@ async function initDB() {
       click_count INTEGER DEFAULT 0
     )
   `);
+  return db;
 }
 
-// Generate short code (random)
+// ... (Fungsi generateShortCode, isValidUrl, getClientIP tidak berubah)
 function generateShortCode(length = 6) {
   const characters = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
   let code = '';
@@ -39,7 +44,6 @@ function generateShortCode(length = 6) {
   return code;
 }
 
-// Validate URL
 function isValidUrl(string) {
   try {
     new URL(string);
@@ -49,14 +53,13 @@ function isValidUrl(string) {
   }
 }
 
-// Get client IP
 function getClientIP(req) {
   return req.headers['x-forwarded-for']?.split(',').shift() || 
          req.socket.remoteAddress || 
          'Unknown';
 }
 
-// Fungsi Notifikasi Telegram
+// Fungsi Notifikasi Telegram (tidak berubah)
 async function sendTelegramNotification(code, ip, url) {
   if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) return;
 
@@ -92,20 +95,19 @@ async function sendTelegramNotification(code, ip, url) {
   }
 }
 
-// Inisialisasi DB di luar handler utama (tetap async)
-initDB().catch(e => console.error('Failed to initialize database (Pre-runtime):', e));
-
 // --- Main Handler for Vercel Serverless Function ---
 module.exports = async (req, res) => {
-  // 🎯 FIX: Wrapper try/catch TERTINGGI untuk menjamin respons JSON
+  // 🎯 LANGKAH 1: Selalu bungkus kode dengan try-catch global untuk jaminan respons JSON
   try {
-    // Pastikan DB sudah terinisialisasi
-    if (!db) {
-        await initDB();
-    }
+    // 🎯 LANGKAH 2: Panggil inisialisasi DB di dalam handler
+    // Jika initDB gagal, ia akan dilempar ke catch global di bawah.
+    await initDB(); 
 
     const path = req.url.split('?')[0];
     const isShortCodePath = path.match(/^\/([a-zA-Z0-9_-]{3,10})$/);
+
+    // LOGIKA API: shorten, stats, redirect (TIDAK BERUBAH)
+    // ... (Logika yang sebelumnya ada di sini)
 
     // Handle API shorten (POST)
     if (path === '/api/shorten' && req.method === 'POST') {
@@ -163,7 +165,6 @@ module.exports = async (req, res) => {
         
       } catch (error) {
         console.error('Shorten error:', error);
-        // Error handler internal API
         return res.status(500).json({ success: false, error: 'Server error during shortening process' });
       }
     }
@@ -190,7 +191,6 @@ module.exports = async (req, res) => {
         
       } catch (error) {
         console.error('Stats error:', error);
-        // Error handler internal API
         return res.status(500).json({ success: false, error: 'Server error during stats retrieval' });
       }
     }
@@ -222,7 +222,6 @@ module.exports = async (req, res) => {
         }
       } catch (error) {
         console.error('Redirect error:', error);
-        // Error handler internal API
         res.status(500).json({ success: false, error: 'Server error during redirection' });
       }
       return;
@@ -232,12 +231,12 @@ module.exports = async (req, res) => {
     res.status(404).json({ success: false, error: 'Not Found' });
     
   } catch (globalError) {
-    // ⚠️ Handler Global untuk error fatal (seperti kegagalan DB) ⚠️
-    console.error('FATAL GLOBAL ERROR in Vercel Handler:', globalError);
-    // SELALU kembalikan JSON
+    // ⚠️ Handler Global untuk error fatal (termasuk kegagalan initDB) ⚠️
+    console.error('FATAL GLOBAL ERROR in Vercel Handler:', globalError.message || globalError);
+    // SELALU kembalikan JSON 500
     return res.status(500).json({ 
         success: false, 
-        error: 'FATAL SERVER ERROR: Failed to process request (Check Vercel logs for DB connection issues).' 
+        error: 'FATAL SERVER ERROR: Failed to process request (DB initialization failed).' 
     });
   }
 };
