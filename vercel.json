@@ -14,14 +14,19 @@
     {
       "src": "/api/shorten",
       "dest": "/api/shorten.js",
-      "methods": ["POST"]
+      "methods": ["POST", "GET", "OPTIONS"]
     },
     {
-      "src": "/([a-zA-Z0-9]{6})",
+      "src": "/api/stats",
+      "dest": "/api/shorten.js",
+      "methods": ["GET"]
+    },
+    {
+      "src": "/([a-zA-Z0-9_-]{3,10})$",
       "dest": "/api/shorten.js"
     },
     {
-      "src": "/",
+      "src": "/(.*)",
       "dest": "/public/index.html"
     }
   ]
