@@ -170,6 +170,14 @@
             });
         });
 
+        openButton.addEventListener('click', function(e) {
+            e.preventDefault();
+            const url = shortUrlInput.value;
+            if (url) {
+                window.open(url, '_blank');
+            }
+        });
+
         form.addEventListener('submit', async function(e) {
             e.preventDefault();
 
