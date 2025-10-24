@@ -119,9 +119,24 @@
         const shortUrlInput = document.getElementById('short-url');
         const copyButton = document.getElementById('copy-button');
 
-        const API_BASE_URL = 'https://api.deline.my.id/maker/shorturl';
         const GENERATE_ICON_HTML = '<i class="fa-solid fa-wand-magic-sparkles mr-2 text-sm"></i>Shorten URL';
         const PROCESSING_ICON_HTML = '<i class="fa-solid fa-spinner fa-spin mr-2"></i>Sabar...';
+
+        // Dictionary untuk menyimpan URLs (client-side)
+        let urls = {};
+        
+        // Load dari localStorage jika ada
+        function loadUrls() {
+            const saved = localStorage.getItem('shortUrls');
+            if (saved) {
+                urls = JSON.parse(saved);
+            }
+        }
+
+        // Save ke localStorage
+        function saveUrls() {
+            localStorage.setItem('shortUrls', JSON.stringify(urls));
+        }
 
         function generateRandomCode(length = 6) {
             const chars = '0123456789abcdefghijklmnopqrstuvwxyz';
@@ -164,7 +179,7 @@
             });
         });
 
-        form.addEventListener('submit', async function(e) {
+        form.addEventListener('submit', function(e) {
             e.preventDefault();
 
             resultArea.classList.add('hidden');
@@ -189,37 +204,45 @@
                 return;
             }
 
+            // Cek apakah custom code sudah ada
+            if (customCode && urls[customCode]) {
+                showError('Custom code sudah dipakai!');
+                return;
+            }
+
             // Jika tidak ada custom code, generate random
             if (!customCode) {
-                customCode = generateRandomCode();
+                do {
+                    customCode = generateRandomCode();
+                } while (urls[customCode]);
             }
 
             generateButton.disabled = true;
             generateButton.innerHTML = PROCESSING_ICON_HTML;
 
-            try {
-                const response = await fetch(API_BASE_URL, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        long_url: longUrl,
-                        short_code: customCode
-                    })
-                });
+            // Simulate processing delay
+            setTimeout(() => {
+                urls[customCode] = longUrl;
+                saveUrls();
 
-                const result = await response.json();
+                const shortUrl = `${window.location.origin}/?code=${customCode}`;
+                showSuccess(shortUrl);
 
-                if (result.success) {
-                    showSuccess(result.short_url);
-                } else {
-                    showError(result.error || 'Gagal membuat URL pendek');
-                }
-            } catch (error) {
-                showError('Kesalahan jaringan: ' + error.message);
-            }
+                // Reset form
+                longUrlInput.value = '';
+                customCodeInput.value = '';
+            }, 500);
         });
+
+        // Load URLs pada awal
+        loadUrls();
+
+        // Check jika ada parameter code di URL, redirect ke long URL
+        const urlParams = new URLSearchParams(window.location.search);
+        const code = urlParams.get('code');
+        if (code && urls[code]) {
+            window.location.href = urls[code];
+        }
     </script>
 </body>
 </html>
