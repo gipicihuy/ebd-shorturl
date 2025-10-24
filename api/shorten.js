@@ -7,8 +7,9 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Webhook dari environment variable (AMAN!)
-const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL;
+// 🔔 VARIABEL LINGKUNGAN TELEGRAM 🔔
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 
 // Open SQLite database
 let db;
@@ -51,173 +52,91 @@ function isValidUrl(string) {
 
 // Get client IP
 function getClientIP(req) {
-  return req.headers['x-forwarded-for']?.split(',')[0].trim() ||
-         req.headers['x-real-ip'] ||
-         req.connection.remoteAddress ||
-         req.socket.remoteAddress ||
+  return req.headers['x-forwarded-for']?.split(',').shift() || 
+         req.socket.remoteAddress || 
          'Unknown';
 }
 
-// Send Discord notification
-async function sendDiscordNotification(shortCode, longUrl, ip) {
-  if (!DISCORD_WEBHOOK_URL) {
-    console.log('Discord webhook not configured');
-    return;
-  }
+// 🚀 FUNGSI NOTIFIKASI TELEGRAM DENGAN FORMAT MARKDOWN 🚀
+async function sendTelegramNotification(code, ip, url) {
+  // Hanya kirim jika token dan chat ID tersedia
+  if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) return;
+
+  const clickTime = new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });
+  
+  // Format pesan menggunakan Markdown untuk visual yang lebih baik
+  const message = `
+*⚡️ PEMBERITAHUAN KLIK TAUTAN*
+
+---------------------------------------------
+*🔗 Kode Pendek:* \`${code}\`
+*➡️ Tujuan:* [Lihat URL Penuh](${url})
+*👁️‍🗨️ IP Klien:* \`${ip}\`
+*⏰ Waktu (WIB):* ${clickTime}
+---------------------------------------------
+`;
+
+  const telegramApiUrl = \`https://api.telegram.org/bot\${TELEGRAM_BOT_TOKEN}/sendMessage\`;
 
   try {
-    const now = new Date();
-    
-    // Format tanggal Indonesia
-    const tanggal = now.toLocaleDateString('id-ID', {
-      day: '2-digit',
-      month: 'long',
-      year: 'numeric',
-      timeZone: 'Asia/Jakarta'
-    });
-    
-    // Format jam Indonesia (WIB)
-    const jam = now.toLocaleTimeString('id-ID', {
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      hour12: false,
-      timeZone: 'Asia/Jakarta'
-    });
-
-    const payload = {
-      embeds: [{
-        title: '🔗 Link Diklik!',
-        color: 65280,
-        fields: [
-          {
-            name: '📎 Short Code',
-            value: '`' + shortCode + '`',
-            inline: true
-          },
-          {
-            name: '🌐 IP Address',
-            value: '`' + ip + '`',
-            inline: true
-          },
-          {
-            name: '📅 Tanggal',
-            value: tanggal,
-            inline: true
-          },
-          {
-            name: '🕒 Jam (WIB)',
-            value: jam,
-            inline: true
-          },
-          {
-            name: '🔗 Target URL',
-            value: longUrl.length > 100 ? longUrl.substring(0, 97) + '...' : longUrl,
-            inline: false
-          }
-        ],
-        footer: {
-          text: 'EBD URL Shortener'
-        },
-        timestamp: now.toISOString()
-      }]
-    };
-
-    const response = await fetch(DISCORD_WEBHOOK_URL, {
+    await fetch(telegramApiUrl, {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
       },
-      body: JSON.stringify(payload)
+      body: JSON.stringify({
+        chat_id: TELEGRAM_CHAT_ID,
+        text: message,
+        parse_mode: 'Markdown' // Menggunakan Markdown untuk formatting pesan
+      }),
     });
-
-    if (!response.ok) {
-      console.error('Discord webhook failed:', response.status, await response.text());
-    } else {
-      console.log('Discord notification sent successfully');
-    }
   } catch (error) {
-    console.error('Discord notification error:', error);
+    console.error('Failed to send Telegram notification:', error);
   }
 }
 
-// Handle ALL requests
-app.all('*', async (req, res) => {
-  await initDB();
-  
-  const path = req.path;
-  
-  // Handle redirect for short codes
-  if (path.length >= 4 && path.length <= 12 && path.startsWith('/')) {
-    const short_code = path.slice(1);
-    
-    if (/^[a-zA-Z0-9_-]{3,10}$/.test(short_code)) {
-      try {
-        const url = await db.get(
-          'SELECT long_url FROM short_urls WHERE short_code = ?',
-          [short_code]
-        );
-        
-        if (url && url.long_url) {
-          // Update click count
-          await db.run(
-            'UPDATE short_urls SET click_count = click_count + 1 WHERE short_code = ?',
-            [short_code]
-          );
-          
-          // Get client IP
-          const clientIP = getClientIP(req);
-          
-          // Send Discord notification (async, tidak menunggu)
-          sendDiscordNotification(short_code, url.long_url, clientIP);
-          
-          return res.redirect(302, url.long_url);
-        }
-      } catch (error) {
-        console.error('Redirect error:', error);
-      }
-    }
-  }
-  
+
+// Initialize DB
+initDB().catch(e => console.error('Failed to initialize database:', e));
+
+// --- Main Handler for Vercel Serverless Function ---
+module.exports = async (req, res) => {
+  await initDB().catch(e => {
+    console.error('DB init failed in request:', e);
+    return res.status(500).json({ success: false, error: 'Database initialization failed' });
+  });
+
+  const path = req.url.split('?')[0];
+  const isShortCodePath = path.match(/^\/([a-zA-Z0-9_-]{3,10})$/);
+
   // Handle API shorten
   if (path === '/api/shorten' && req.method === 'POST') {
     try {
       const { long_url, short_code } = req.body;
-      
-      if (!long_url) {
-        return res.json({ success: false, error: 'URL is required' });
-      }
-      
-      if (!isValidUrl(long_url)) {
-        return res.json({ success: false, error: 'Invalid URL format' });
-      }
-      
       let finalShortCode;
-      
+
+      if (!long_url || !isValidUrl(long_url)) {
+        return res.json({ success: false, error: 'URL is invalid' });
+      }
+
+      // Check custom code
       if (short_code) {
-        if (typeof short_code !== 'string') {
-          return res.json({ success: false, error: 'Short code must be a string' });
+        if (short_code.length < 3 || short_code.length > 10 || !/^[a-zA-Z0-9_-]+$/.test(short_code)) {
+          return res.json({ success: false, error: 'Custom code invalid (3-10 chars, alphanumeric, _-)' });
         }
-
-        if (short_code.length < 3 || short_code.length > 10) {
-          return res.json({ success: false, error: 'Short code must be 3-10 characters' });
-        }
-
-        if (!/^[a-zA-Z0-9_-]+$/.test(short_code)) {
-          return res.json({ success: false, error: 'Short code can only contain letters, numbers, underscore, and dash' });
-        }
-
-        const existing = await db.get(
+        
+        const check = await db.get(
           'SELECT id FROM short_urls WHERE short_code = ?', 
           [short_code]
         );
         
-        if (existing) {
-          return res.json({ success: false, error: 'Short code already taken' });
+        if (check) {
+          return res.json({ success: false, error: `Custom code "${short_code}" is already taken` });
         }
-
+        
         finalShortCode = short_code;
       } else {
+        // Generate random unique code
         let generated;
         let exists;
         
@@ -269,12 +188,45 @@ app.all('*', async (req, res) => {
       } else {
         return res.json({ success: false, error: 'Short code not found' });
       }
+      
     } catch (error) {
-      return res.json({ success: false, error: 'Server error' });
+      console.error('Stats error:', error);
+      return res.status(500).json({ success: false, error: 'Server error' });
     }
   }
-  
-  res.status(404).json({ error: 'Not found' });
-});
 
-module.exports = app;
+  // Handle short code redirect (short_code = /([a-zA-Z0-9_-]{3,10})$)
+  if (isShortCodePath) {
+    const shortCode = isShortCodePath[1];
+    
+    try {
+      const url = await db.get(
+        'SELECT long_url FROM short_urls WHERE short_code = ?', 
+        [shortCode]
+      );
+
+      if (url) {
+        // Increment click count
+        await db.run('UPDATE short_urls SET click_count = click_count + 1 WHERE short_code = ?', [shortCode]);
+        
+        const clientIp = getClientIP(req);
+
+        // 🚨 Panggil Notifikasi Telegram dengan format baru
+        sendTelegramNotification(shortCode, clientIp, url.long_url);
+
+        // Redirect
+        res.writeHead(302, { 'Location': url.long_url });
+        return res.end();
+      } else {
+        res.status(404).json({ success: false, error: 'URL not found' });
+      }
+    } catch (error) {
+      console.error('Redirect error:', error);
+      res.status(500).json({ success: false, error: 'Server error' });
+    }
+    return;
+  }
+
+  // Default route (handled by /public/index.html via vercel.json)
+  res.status(404).json({ success: false, error: 'Not Found' });
+};
