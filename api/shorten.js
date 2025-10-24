@@ -1,73 +1,53 @@
 const express = require('express');
-const sqlite3 = require('sqlite3').verbose();
-const { open } = require('sqlite');
+const axios = require('axios'); // Untuk Gist API dan Telegram
 const cors = require('cors');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
+// 🔔 ENVIRONMENT VARIABLES DARI VERCEL
+const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
+const GIST_ID = process.env.GIST_ID;
+const APP_DOMAIN = process.env.APP_DOMAIN || 'https://ebd.biz.id'; // Domain Anda
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 
-let db = null; // Inisialisasi DB sekarang menjadi null di luar handler
+// Klien Axios untuk interaksi dengan GitHub API
+const githubApi = axios.create({
+  baseURL: 'https://api.github.com',
+  headers: { 
+    'Authorization': `token ${GITHUB_TOKEN}`, 
+    'Accept': 'application/vnd.github.v3+json' 
+  },
+});
 
-// Open SQLite database dan pastikan tabel ada
-async function initDB() {
-  if (db) return db; // Jika sudah ada, langsung kembalikan
-  
-  // Catatan: Vercel serverless hanya mengizinkan penulisan di direktori /tmp
-  db = await open({
-    filename: '/tmp/urls.db',
-    driver: sqlite3.Database
-  });
-  
-  await db.exec(`
-    CREATE TABLE IF NOT EXISTS short_urls (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      long_url TEXT NOT NULL,
-      short_code VARCHAR(10) UNIQUE NOT NULL,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      click_count INTEGER DEFAULT 0
-    )
-  `);
-  return db;
-}
+// --- FUNGSI UTILITAS ---
 
-// ... (Fungsi generateShortCode, isValidUrl, getClientIP tidak berubah)
-function generateShortCode(length = 6) {
-  const characters = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
-  let code = '';
+function generateRandomCode(length = 6) {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  let result = '';
   for (let i = 0; i < length; i++) {
-    code += characters[Math.floor(Math.random() * characters.length)];
+    result += chars.charAt(Math.floor(Math.random() * chars.length));
   }
-  return code;
+  return result;
 }
 
 function isValidUrl(string) {
-  try {
-    new URL(string);
-    return true;
-  } catch (_) {
-    return false;
-  }
+  try { new URL(string); return true; } catch (_) { return false; }
 }
 
 function getClientIP(req) {
-  return req.headers['x-forwarded-for']?.split(',').shift() || 
-         req.socket.remoteAddress || 
-         'Unknown';
+  return req.headers['x-forwarded-for']?.split(',').shift() || req.socket.remoteAddress || 'Unknown';
 }
 
-// Fungsi Notifikasi Telegram (tidak berubah)
+// FUNGSI NOTIFIKASI TELEGRAM
 async function sendTelegramNotification(code, ip, url) {
   if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) return;
 
   const clickTime = new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });
-  
   const message = `
 *⚡️ PEMBERITAHUAN KLIK TAUTAN*
-
 ---------------------------------------------
 *🔗 Kode Pendek:* \`${code}\`
 *➡️ Tujuan:* [Lihat URL Penuh](${url})
@@ -75,168 +55,156 @@ async function sendTelegramNotification(code, ip, url) {
 *⏰ Waktu (WIB):* ${clickTime}
 ---------------------------------------------
 `;
-
-  const telegramApiUrl = \`https://api.telegram.org/bot\${TELEGRAM_BOT_TOKEN}/sendMessage\`;
-
+  const telegramApiUrl = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
   try {
-    await fetch(telegramApiUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        chat_id: TELEGRAM_CHAT_ID,
-        text: message,
-        parse_mode: 'Markdown' 
-      }),
+    await axios.post(telegramApiUrl, {
+      chat_id: TELEGRAM_CHAT_ID,
+      text: message,
+      parse_mode: 'Markdown' 
     });
   } catch (error) {
-    console.error('Failed to send Telegram notification:', error);
+    console.error('Failed to send Telegram notification:', error.response ? error.response.data : error.message);
   }
 }
 
-// --- Main Handler for Vercel Serverless Function ---
+
+// --- MAIN HANDLER ---
 module.exports = async (req, res) => {
-  // 🎯 LANGKAH 1: Selalu bungkus kode dengan try-catch global untuk jaminan respons JSON
-  try {
-    // 🎯 LANGKAH 2: Panggil inisialisasi DB di dalam handler
-    // Jika initDB gagal, ia akan dilempar ke catch global di bawah.
-    await initDB(); 
+    // 🎯 FIX: Wrapper try/catch TERTINGGI untuk jaminan respons JSON
+    try {
+        const pathUrl = req.url.split('?')[0];
+        const shortCodeMatch = pathUrl.match(/^\/([a-zA-Z0-9_-]{3,10})$/);
 
-    const path = req.url.split('?')[0];
-    const isShortCodePath = path.match(/^\/([a-zA-Z0-9_-]{3,10})$/);
+        // ----------------------------------------
+        // 1. Handle API shorten (POST /api/shorten)
+        // ----------------------------------------
+        if (pathUrl === '/api/shorten' && req.method === 'POST') {
+            const { longUrl: long_url_body, customCode: short_code_body } = req.body;
 
-    // LOGIKA API: shorten, stats, redirect (TIDAK BERUBAH)
-    // ... (Logika yang sebelumnya ada di sini)
+            if (!long_url_body || !isValidUrl(long_url_body)) {
+                return res.status(400).json({ success: false, error: 'URL is invalid' });
+            }
 
-    // Handle API shorten (POST)
-    if (path === '/api/shorten' && req.method === 'POST') {
-      try {
-        const { long_url, short_code } = req.body;
-        let finalShortCode;
+            try {
+                // Ambil Gist saat ini
+                const { data: gist } = await githubApi.get(`/gists/${GIST_ID}`);
+                const gistFile = Object.values(gist.files)[0];
+                let links = JSON.parse(gistFile.content || '{}');
+                let shortCode = short_code_body;
 
-        if (!long_url || !isValidUrl(long_url)) {
-          return res.json({ success: false, error: 'URL is invalid' });
+                if (!shortCode) {
+                    do { shortCode = generateRandomCode(); } while (links[shortCode]);
+                } else if (links[shortCode]) {
+                    return res.status(400).json({ success: false, error: 'Custom code already in use.' });
+                }
+
+                // Tambahkan data baru ke Gist
+                links[shortCode] = {
+                    url: long_url_body,
+                    created_at: new Date().toISOString(),
+                    clicks: 0 
+                    // Struktur data di Gist diubah agar dapat menyimpan click_count
+                }; 
+
+                // Perbarui Gist
+                await githubApi.patch(`/gists/${GIST_ID}`, {
+                    files: { [gistFile.filename]: { content: JSON.stringify(links, null, 2) } },
+                });
+
+                return res.json({
+                    success: true,
+                    short_code: shortCode,
+                    short_url: `${APP_DOMAIN}/${shortCode}`
+                });
+
+            } catch (error) {
+                console.error('Shorten error (Gist API failed):', error.response ? error.response.data : error.message);
+                return res.status(500).json({ success: false, error: 'Failed to communicate with Gist API.' });
+            }
         }
 
-        // Check custom code
-        if (short_code) {
-          if (short_code.length < 3 || short_code.length > 10 || !/^[a-zA-Z0-9_-]+$/.test(short_code)) {
-            return res.json({ success: false, error: 'Custom code invalid (3-10 chars, alphanumeric, _-)' });
-          }
-          
-          const check = await db.get(
-            'SELECT id FROM short_urls WHERE short_code = ?', 
-            [short_code]
-          );
-          
-          if (check) {
-            return res.json({ success: false, error: `Custom code "${short_code}" is already taken` });
-          }
-          
-          finalShortCode = short_code;
-        } else {
-          // Generate random unique code
-          let generated;
-          let exists;
-          
-          do {
-            generated = generateShortCode();
-            const check = await db.get(
-              'SELECT id FROM short_urls WHERE short_code = ?', 
-              [generated]
-            );
-            exists = !!check;
-          } while (exists);
-          
-          finalShortCode = generated;
+        // ----------------------------------------
+        // 2. Handle short code redirect (/:code)
+        // ----------------------------------------
+        if (shortCodeMatch) {
+            const shortCode = shortCodeMatch[1];
+            
+            try {
+                // Ambil Gist saat ini
+                const { data: gist } = await githubApi.get(`/gists/${GIST_ID}`);
+                const gistFile = Object.values(gist.files)[0];
+                let links = JSON.parse(gistFile.content || '{}');
+                const linkData = links[shortCode];
+
+                if (linkData && linkData.url) {
+                    const longUrl = linkData.url;
+                    
+                    // ⚠️ Update Click Count
+                    linkData.clicks = (linkData.clicks || 0) + 1;
+                    
+                    // Perbarui Gist (GIST HARUS DIPERBARUI SETIAP KLIK)
+                    await githubApi.patch(`/gists/${GIST_ID}`, {
+                        files: { [gistFile.filename]: { content: JSON.stringify(links, null, 2) } },
+                    });
+                    
+                    // Panggil Notifikasi Telegram
+                    sendTelegramNotification(shortCode, getClientIP(req), longUrl);
+
+                    // Redirect
+                    res.writeHead(302, { 'Location': longUrl });
+                    return res.end();
+                } else {
+                    return res.status(404).json({ success: false, error: 'URL not found' });
+                }
+            } catch (error) {
+                console.error('Redirect error (Gist API failed):', error.response ? error.response.data : error.message);
+                // Jika Gist gagal fetch, kita masih harus mengembalikan JSON
+                return res.status(500).json({ success: false, error: 'Server error during redirection.' });
+            }
         }
         
-        await db.run(
-          'INSERT INTO short_urls (long_url, short_code) VALUES (?, ?)',
-          [long_url, finalShortCode]
-        );
+        // ----------------------------------------
+        // 3. Handle API stats (GET /api/stats)
+        // ----------------------------------------
+        if (pathUrl === '/api/stats' && req.method === 'GET') {
+            const code = req.query.code;
+            
+            if (!code) {
+              return res.status(400).json({ success: false, error: 'Code parameter required' });
+            }
+
+            try {
+                const { data: gist } = await githubApi.get(`/gists/${GIST_ID}`);
+                const gistFile = Object.values(gist.files)[0];
+                const links = JSON.parse(gistFile.content || '{}');
+                const stats = links[code];
+
+                if (stats && stats.url) {
+                    return res.json({ 
+                        success: true, 
+                        stats: {
+                            short_code: code,
+                            click_count: stats.clicks || 0,
+                            created_at: stats.created_at || 'N/A'
+                        } 
+                    });
+                } else {
+                    return res.json({ success: false, error: 'Short code not found' });
+                }
+            } catch (error) {
+                console.error('Stats error (Gist API failed):', error.response ? error.response.data : error.message);
+                return res.status(500).json({ success: false, error: 'Server error during stats retrieval.' });
+            }
+        }
+
+        // Default route (diasumsikan Vercel routing /public/index.html)
+        return res.status(404).json({ success: false, error: 'Not Found' });
         
-        return res.json({
-          success: true,
-          short_code: finalShortCode,
-          short_url: `https://ebd.biz.id/${finalShortCode}`
+    } catch (globalError) {
+        console.error('FATAL GLOBAL ERROR in Vercel Handler:', globalError);
+        return res.status(500).json({ 
+            success: false, 
+            error: 'FATAL SERVER ERROR: Unhandled exception.' 
         });
-        
-      } catch (error) {
-        console.error('Shorten error:', error);
-        return res.status(500).json({ success: false, error: 'Server error during shortening process' });
-      }
     }
-
-    // Handle API stats (GET)
-    if (path === '/api/stats' && req.method === 'GET') {
-      try {
-        const code = req.query.code;
-        
-        if (!code) {
-          return res.json({ success: false, error: 'Code parameter required' });
-        }
-
-        const stats = await db.get(
-          'SELECT short_code, click_count, created_at FROM short_urls WHERE short_code = ?',
-          [code]
-        );
-
-        if (stats) {
-          return res.json({ success: true, stats });
-        } else {
-          return res.json({ success: false, error: 'Short code not found' });
-        }
-        
-      } catch (error) {
-        console.error('Stats error:', error);
-        return res.status(500).json({ success: false, error: 'Server error during stats retrieval' });
-      }
-    }
-
-    // Handle short code redirect
-    if (isShortCodePath) {
-      const shortCode = isShortCodePath[1];
-      
-      try {
-        const url = await db.get(
-          'SELECT long_url FROM short_urls WHERE short_code = ?', 
-          [shortCode]
-        );
-
-        if (url) {
-          // Increment click count
-          await db.run('UPDATE short_urls SET click_count = click_count + 1 WHERE short_code = ?', [shortCode]);
-          
-          const clientIp = getClientIP(req);
-
-          // Panggil Notifikasi Telegram
-          sendTelegramNotification(shortCode, clientIp, url.long_url);
-
-          // Redirect
-          res.writeHead(302, { 'Location': url.long_url });
-          return res.end();
-        } else {
-          res.status(404).json({ success: false, error: 'URL not found' });
-        }
-      } catch (error) {
-        console.error('Redirect error:', error);
-        res.status(500).json({ success: false, error: 'Server error during redirection' });
-      }
-      return;
-    }
-
-    // Jika tidak ada path yang cocok
-    res.status(404).json({ success: false, error: 'Not Found' });
-    
-  } catch (globalError) {
-    // ⚠️ Handler Global untuk error fatal (termasuk kegagalan initDB) ⚠️
-    console.error('FATAL GLOBAL ERROR in Vercel Handler:', globalError.message || globalError);
-    // SELALU kembalikan JSON 500
-    return res.status(500).json({ 
-        success: false, 
-        error: 'FATAL SERVER ERROR: Failed to process request (DB initialization failed).' 
-    });
-  }
 };
