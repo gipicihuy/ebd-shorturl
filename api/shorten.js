@@ -7,11 +7,14 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Webhook dari environment variable (AMAN!)
+const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL;
+
 // Open SQLite database
 let db;
 async function initDB() {
   db = await open({
-    filename: '/tmp/urls.db',  // Use /tmp for Vercel
+    filename: '/tmp/urls.db',
     driver: sqlite3.Database
   });
   
@@ -46,17 +49,101 @@ function isValidUrl(string) {
   }
 }
 
+// Get client IP
+function getClientIP(req) {
+  return req.headers['x-forwarded-for']?.split(',')[0].trim() ||
+         req.headers['x-real-ip'] ||
+         req.connection.remoteAddress ||
+         req.socket.remoteAddress ||
+         'Unknown';
+}
+
+// Send Discord notification
+async function sendDiscordNotification(shortCode, longUrl, ip) {
+  if (!DISCORD_WEBHOOK_URL) {
+    console.log('Discord webhook not configured');
+    return;
+  }
+
+  try {
+    const now = new Date();
+    
+    // Format tanggal Indonesia
+    const tanggal = now.toLocaleDateString('id-ID', {
+      day: '2-digit',
+      month: 'long',
+      year: 'numeric'
+    });
+    
+    // Format jam Indonesia (WIB)
+    const jam = now.toLocaleTimeString('id-ID', {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+      timeZone: 'Asia/Jakarta'
+    });
+
+    const embed = {
+      title: '🔗 Link Diklik!',
+      color: 0x00ff00,
+      fields: [
+        {
+          name: '📎 Short Code',
+          value: `\`${shortCode}\``,
+          inline: true
+        },
+        {
+          name: '🌐 IP Address',
+          value: `\`${ip}\``,
+          inline: true
+        },
+        {
+          name: '📅 Tanggal',
+          value: tanggal,
+          inline: true
+        },
+        {
+          name: '🕒 Jam (WIB)',
+          value: jam,
+          inline: true
+        },
+        {
+          name: '🔗 Target URL',
+          value: longUrl.length > 100 ? longUrl.substring(0, 97) + '...' : longUrl,
+          inline: false
+        }
+      ],
+      footer: {
+        text: 'EBD URL Shortener'
+      },
+      timestamp: now.toISOString()
+    };
+
+    await fetch(DISCORD_WEBHOOK_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        embeds: [embed]
+      })
+    });
+  } catch (error) {
+    console.error('Discord notification error:', error);
+  }
+}
+
 // Handle ALL requests
 app.all('*', async (req, res) => {
-  await initDB(); // Initialize DB on each request
+  await initDB();
   
   const path = req.path;
   
-  // Handle redirect for short codes (any 3-10 character code)
+  // Handle redirect for short codes
   if (path.length >= 4 && path.length <= 12 && path.startsWith('/')) {
-    const short_code = path.slice(1); // Remove leading slash
+    const short_code = path.slice(1);
     
-    // Validate format: alphanumeric, underscore, dash only
     if (/^[a-zA-Z0-9_-]{3,10}$/.test(short_code)) {
       try {
         const url = await db.get(
@@ -70,6 +157,12 @@ app.all('*', async (req, res) => {
             'UPDATE short_urls SET click_count = click_count + 1 WHERE short_code = ?',
             [short_code]
           );
+          
+          // Get client IP
+          const clientIP = getClientIP(req);
+          
+          // Send Discord notification (async, tidak menunggu)
+          sendDiscordNotification(short_code, url.long_url, clientIP);
           
           return res.redirect(302, url.long_url);
         }
@@ -88,7 +181,6 @@ app.all('*', async (req, res) => {
         return res.json({ success: false, error: 'URL is required' });
       }
       
-      // Validate URL format
       if (!isValidUrl(long_url)) {
         return res.json({ success: false, error: 'Invalid URL format' });
       }
@@ -96,7 +188,6 @@ app.all('*', async (req, res) => {
       let finalShortCode;
       
       if (short_code) {
-        // Validasi custom short code
         if (typeof short_code !== 'string') {
           return res.json({ success: false, error: 'Short code must be a string' });
         }
@@ -109,7 +200,6 @@ app.all('*', async (req, res) => {
           return res.json({ success: false, error: 'Short code can only contain letters, numbers, underscore, and dash' });
         }
 
-        // Cek apakah short code sudah ada
         const existing = await db.get(
           'SELECT id FROM short_urls WHERE short_code = ?', 
           [short_code]
@@ -121,7 +211,6 @@ app.all('*', async (req, res) => {
 
         finalShortCode = short_code;
       } else {
-        // Generate random short code jika tidak disediakan
         let generated;
         let exists;
         
@@ -137,7 +226,6 @@ app.all('*', async (req, res) => {
         finalShortCode = generated;
       }
       
-      // Save to database
       await db.run(
         'INSERT INTO short_urls (long_url, short_code) VALUES (?, ?)',
         [long_url, finalShortCode]
@@ -155,7 +243,7 @@ app.all('*', async (req, res) => {
     }
   }
 
-  // Handle API stats (optional)
+  // Handle API stats
   if (path === '/api/stats' && req.method === 'GET') {
     try {
       const code = req.query.code;
@@ -179,9 +267,7 @@ app.all('*', async (req, res) => {
     }
   }
   
-  // Default response
   res.status(404).json({ error: 'Not found' });
 });
 
-// Export for Vercel
 module.exports = app;
