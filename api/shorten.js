@@ -72,7 +72,8 @@ async function sendDiscordNotification(shortCode, longUrl, ip) {
     const tanggal = now.toLocaleDateString('id-ID', {
       day: '2-digit',
       month: 'long',
-      year: 'numeric'
+      year: 'numeric',
+      timeZone: 'Asia/Jakarta'
     });
     
     // Format jam Indonesia (WIB)
@@ -84,51 +85,57 @@ async function sendDiscordNotification(shortCode, longUrl, ip) {
       timeZone: 'Asia/Jakarta'
     });
 
-    const embed = {
-      title: '🔗 Link Diklik!',
-      color: 0x00ff00,
-      fields: [
-        {
-          name: '📎 Short Code',
-          value: `\`${shortCode}\``,
-          inline: true
+    const payload = {
+      embeds: [{
+        title: '🔗 Link Diklik!',
+        color: 65280,
+        fields: [
+          {
+            name: '📎 Short Code',
+            value: '`' + shortCode + '`',
+            inline: true
+          },
+          {
+            name: '🌐 IP Address',
+            value: '`' + ip + '`',
+            inline: true
+          },
+          {
+            name: '📅 Tanggal',
+            value: tanggal,
+            inline: true
+          },
+          {
+            name: '🕒 Jam (WIB)',
+            value: jam,
+            inline: true
+          },
+          {
+            name: '🔗 Target URL',
+            value: longUrl.length > 100 ? longUrl.substring(0, 97) + '...' : longUrl,
+            inline: false
+          }
+        ],
+        footer: {
+          text: 'EBD URL Shortener'
         },
-        {
-          name: '🌐 IP Address',
-          value: `\`${ip}\``,
-          inline: true
-        },
-        {
-          name: '📅 Tanggal',
-          value: tanggal,
-          inline: true
-        },
-        {
-          name: '🕒 Jam (WIB)',
-          value: jam,
-          inline: true
-        },
-        {
-          name: '🔗 Target URL',
-          value: longUrl.length > 100 ? longUrl.substring(0, 97) + '...' : longUrl,
-          inline: false
-        }
-      ],
-      footer: {
-        text: 'EBD URL Shortener'
-      },
-      timestamp: now.toISOString()
+        timestamp: now.toISOString()
+      }]
     };
 
-    await fetch(DISCORD_WEBHOOK_URL, {
+    const response = await fetch(DISCORD_WEBHOOK_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({
-        embeds: [embed]
-      })
+      body: JSON.stringify(payload)
     });
+
+    if (!response.ok) {
+      console.error('Discord webhook failed:', response.status, await response.text());
+    } else {
+      console.log('Discord notification sent successfully');
+    }
   } catch (error) {
     console.error('Discord notification error:', error);
   }
