@@ -1,15 +1,16 @@
 const express = require('express');
-const axios = require('axios'); // Untuk Gist API dan Telegram
+const axios = require('axios'); // Digunakan untuk Gist API dan Telegram
 const cors = require('cors');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-// 🔔 ENVIRONMENT VARIABLES DARI VERCEL
+// 🔔 VARIABEL LINGKUNGAN DARI VERCEL
+// Pastikan variabel-variabel ini sudah diatur di Vercel:
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
 const GIST_ID = process.env.GIST_ID;
-const APP_DOMAIN = process.env.APP_DOMAIN || 'https://ebd.biz.id'; // Domain Anda
+const APP_DOMAIN = process.env.APP_DOMAIN || 'https://ebd.biz.id';
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 
@@ -41,7 +42,7 @@ function getClientIP(req) {
   return req.headers['x-forwarded-for']?.split(',').shift() || req.socket.remoteAddress || 'Unknown';
 }
 
-// FUNGSI NOTIFIKASI TELEGRAM
+// 📧 FUNGSI NOTIFIKASI TELEGRAM DENGAN FORMAT MARKDOWN
 async function sendTelegramNotification(code, ip, url) {
   if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) return;
 
@@ -68,20 +69,26 @@ async function sendTelegramNotification(code, ip, url) {
 }
 
 
-// --- MAIN HANDLER ---
+// --- MAIN HANDLER UNTUK VERCEL ---
 module.exports = async (req, res) => {
-    // 🎯 FIX: Wrapper try/catch TERTINGGI untuk jaminan respons JSON
+    // Wrapper try/catch TERTINGGI untuk jaminan respons JSON
     try {
+        if (!GITHUB_TOKEN || !GIST_ID) {
+            console.error("GITHUB_TOKEN or GIST_ID is missing.");
+            return res.status(500).json({ success: false, error: 'Server not configured: Missing GitHub credentials.' });
+        }
+        
         const pathUrl = req.url.split('?')[0];
-        const shortCodeMatch = pathUrl.match(/^\/([a-zA-Z0-9_-]{3,10})$/);
+        // Asumsi short code 3-10 karakter
+        const shortCodeMatch = pathUrl.match(/^\/([a-zA-Z0-9_-]{3,10})$/); 
 
         // ----------------------------------------
         // 1. Handle API shorten (POST /api/shorten)
         // ----------------------------------------
         if (pathUrl === '/api/shorten' && req.method === 'POST') {
-            const { longUrl: long_url_body, customCode: short_code_body } = req.body;
+            const { long_url: longUrlBody, short_code: shortCodeBody } = req.body;
 
-            if (!long_url_body || !isValidUrl(long_url_body)) {
+            if (!longUrlBody || !isValidUrl(longUrlBody)) {
                 return res.status(400).json({ success: false, error: 'URL is invalid' });
             }
 
@@ -90,7 +97,7 @@ module.exports = async (req, res) => {
                 const { data: gist } = await githubApi.get(`/gists/${GIST_ID}`);
                 const gistFile = Object.values(gist.files)[0];
                 let links = JSON.parse(gistFile.content || '{}');
-                let shortCode = short_code_body;
+                let shortCode = shortCodeBody;
 
                 if (!shortCode) {
                     do { shortCode = generateRandomCode(); } while (links[shortCode]);
@@ -100,13 +107,12 @@ module.exports = async (req, res) => {
 
                 // Tambahkan data baru ke Gist
                 links[shortCode] = {
-                    url: long_url_body,
+                    url: longUrlBody,
                     created_at: new Date().toISOString(),
                     clicks: 0 
-                    // Struktur data di Gist diubah agar dapat menyimpan click_count
                 }; 
 
-                // Perbarui Gist
+                // Perbarui Gist (Menyimpan data)
                 await githubApi.patch(`/gists/${GIST_ID}`, {
                     files: { [gistFile.filename]: { content: JSON.stringify(links, null, 2) } },
                 });
@@ -119,7 +125,8 @@ module.exports = async (req, res) => {
 
             } catch (error) {
                 console.error('Shorten error (Gist API failed):', error.response ? error.response.data : error.message);
-                return res.status(500).json({ success: false, error: 'Failed to communicate with Gist API.' });
+                // Menangkap error Rate Limit/API Call
+                return res.status(500).json({ success: false, error: 'Failed to communicate with Gist API (Check GitHub Rate Limit).' });
             }
         }
 
@@ -142,7 +149,7 @@ module.exports = async (req, res) => {
                     // ⚠️ Update Click Count
                     linkData.clicks = (linkData.clicks || 0) + 1;
                     
-                    // Perbarui Gist (GIST HARUS DIPERBARUI SETIAP KLIK)
+                    // Perbarui Gist (Mengupdate Click Count)
                     await githubApi.patch(`/gists/${GIST_ID}`, {
                         files: { [gistFile.filename]: { content: JSON.stringify(links, null, 2) } },
                     });
@@ -154,11 +161,11 @@ module.exports = async (req, res) => {
                     res.writeHead(302, { 'Location': longUrl });
                     return res.end();
                 } else {
+                    // Jika kode tidak ditemukan
                     return res.status(404).json({ success: false, error: 'URL not found' });
                 }
             } catch (error) {
                 console.error('Redirect error (Gist API failed):', error.response ? error.response.data : error.message);
-                // Jika Gist gagal fetch, kita masih harus mengembalikan JSON
                 return res.status(500).json({ success: false, error: 'Server error during redirection.' });
             }
         }
@@ -197,10 +204,11 @@ module.exports = async (req, res) => {
             }
         }
 
-        // Default route (diasumsikan Vercel routing /public/index.html)
+        // Default route 404
         return res.status(404).json({ success: false, error: 'Not Found' });
         
     } catch (globalError) {
+        // Handler Global: Menangkap error yang tidak terduga
         console.error('FATAL GLOBAL ERROR in Vercel Handler:', globalError);
         return res.status(500).json({ 
             success: false, 
